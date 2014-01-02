@@ -8,6 +8,7 @@
 #include "../include/client.h"
 #include "../tool/tokenize.h"
 #include "../tool/split_csv.h"
+#include "../tool/hash.h"
 
 using namespace std;
 
@@ -16,15 +17,14 @@ map<string, vector<string> > table2type;
 map<string, vector<string> > table2pkey;
 vector<string> result;
 
-void done(const vector<string>& table, const map<string, int>& m,
-	int depth, vector<string>& row)
+void select(const vector<string>& table, const map<string, int>& m,
+	vector<string>& row, vector<condition>& where, int depth)
 {
 	FILE *fin;
 	char buf[65536];
 	vector<string> column_name, token;
 	string str;
-	int i;
-
+	int i, j;
 	if (depth == table.size()) {
 		str = row[0];
 		for (i = 1; i < row.size(); i++)
@@ -51,11 +51,30 @@ void done(const vector<string>& table, const map<string, int>& m,
 		split_csv(buf, token);
 		assert(token.size() == column_name.size());
 
+		bool isWhere = true;
+		for (i = 0; i < where.size(); i++)
+		{
+			int h1 = myhash(where[i].c1.c_str());
+			int h2;
+			for (j = 0; j < column_name.size(); j++)
+			{
+				h2 = myhash(column_name[j].c_str());
+				if (h1 == h2)
+				{
+					int n2 = atoi(where[i].c2.c_str());
+					int n = atoi(token[j].c_str());
+					if ((where[i].type == 0 && n >= n2) || (where[i].type == 1 && n <= n2)) isWhere = false;
+				}
+			}
+			if (!isWhere) break;
+		}
+		if (!isWhere) continue;
+
 		for (i = 0; i < column_name.size(); i++)
 			if (m.find(column_name[i]) != m.end())
 				row[m.find(column_name[i]) -> second] = token[i];
 
-		done(table, m, depth + 1, row);
+		select(table, m, row, where, depth+1);
 	}
 
 	fclose(fin);
@@ -96,19 +115,21 @@ void preprocess()
 void execute(const string& sql)
 {
 	vector<string> token, output, table, row;
+	vector<condition> where;
+
 	map<string, int> m;
 	int i;
 
 	result.clear();
 
-	if (strstr(sql.c_str(), "INSERT") != NULL ||
-		strstr(sql.c_str(), "WHERE") != NULL) {
+	if (strstr(sql.c_str(), "INSERT") != NULL) {
 		fprintf(stderr, "Sorry, I give up.\n");
 		exit(1);
 	}
 
 	output.clear();
 	table.clear();
+	where.clear();
 	tokenize(sql.c_str(), token);
 	for (i = 0; i < token.size(); i++) {
 		if (token[i] == "SELECT" || token[i] == ",")
@@ -120,7 +141,22 @@ void execute(const string& sql)
 	for (i++; i < token.size(); i++) {
 		if (token[i] == "," || token[i] == ";")
 			continue;
+		if (token[i] == "WHERE")
+			break;
 		table.push_back(token[i]);
+	}
+	for (i++; i < token.size(); i++) {
+		if (token[i] == ";" || token[i] == "AND")
+			continue;
+		assert(i+2 < token.size());
+		condition con;
+		con.c1 = token[i];
+		con.c2 = token[i+2];
+		if (token[i+1] == "<") con.type = 0;
+		else if (token[i+1] == ">") con.type = 1;
+		else if (token[i+1] == "=") con.type = 2;
+		where.push_back(con);
+		i += 2;
 	}
 
 	m.clear();
@@ -130,7 +166,7 @@ void execute(const string& sql)
 	row.clear();
 	row.resize(output.size(), "");
 
-	done(table, m, 0, row);
+	select(table, m, row, where, 0);
 }
 
 int next(char *row)
