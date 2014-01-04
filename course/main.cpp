@@ -9,7 +9,7 @@
 #include "./tool/hash.h"
 #include "./include/client.h"
 
-#define PATH		"test/"
+#define PATH		"../test/Project/"
 #define SCHEMA		(PATH "schema")
 #define STATISTIC	(PATH "statistic")
 #define QUERY		(PATH "query")
@@ -157,8 +157,10 @@ restart_2:
 
 		unsigned int checksum = 0;
 		while (next(buf2))
+		{
 			checksum += myhash(buf2);
-
+			//printf("%X\n", myhash(buf2));
+		}
 		printf("Checksum: %X\n--------\n", checksum);
 	}
 
