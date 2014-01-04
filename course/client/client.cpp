@@ -17,6 +17,12 @@ map<string, vector<string> > table2type;
 map<string, vector<string> > table2pkey;
 vector<string> result;
 
+struct condition {
+string c1;
+string c2;
+int type; // 0: less than, 1: great than, 2: equal
+};
+
 void select(const vector<string>& table, const map<string, int>& m,
 	vector<string>& row, vector<condition>& where, int depth)
 {
@@ -180,7 +186,7 @@ int next(char *row)
 	 * This is for debug only. You should avoid unnecessary output
 	 * in your submission, which will hurt the performance.
 	 */
-	printf("%s\n", row);
+	//printf("%s\n", row);
 
 	return (1);
 }

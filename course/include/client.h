@@ -97,13 +97,6 @@ int next(char *row);
  */
 void close();
 
-
-struct condition {
-string c1;
-string c2;
-int type; // 0: less than, 1: great than, 2: equal
-};
-
 #endif
 
 
