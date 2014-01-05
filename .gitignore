@@ -1,4 +1,5 @@
 run
+course/data/*
 submission.tar.gz
 *~
 *.swp

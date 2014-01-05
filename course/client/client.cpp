@@ -8,90 +8,62 @@
 #include "../include/client.h"
 #include "../tool/tokenize.h"
 #include "../tool/split_csv.h"
-#include "../tool/hash.h"
 
 using namespace std;
 
-map<string, vector<string> > table2name;
-map<string, vector<string> > table2type;
-map<string, vector<string> > table2pkey;
-vector<string> result;
-
-struct condition {
-string c1;
-string c2;
-int type; // 0: less than, 1: great than, 2: equal
-};
-
-void select(const vector<string>& table, const map<string, int>& m,
-	vector<string>& row, vector<condition>& where, int depth)
+struct Condition
 {
-	FILE *fin;
-	char buf[65536];
-	vector<string> column_name, token;
-	string str;
-	int i, j;
-	if (depth == table.size()) {
-		str = row[0];
-		for (i = 1; i < row.size(); i++)
-			str += "," + row[i];
-		result.push_back(str);
-		return;
+	string lhs, rhs;
+	enum OP {LT, EQ, GT, NUL};
+	OP op;
+	Condition() {op = NUL;}
+	Condition(const string& lhs, const string& rhs, OP op)
+	{
+		this -> lhs = lhs;
+		this -> rhs = rhs;
+		this -> op = op;
 	}
-
-	assert(table2name.find(table[depth]) != table2name.end());
-	column_name = table2name[table[depth]];
-
-	fin = fopen(((string) "data/" + table[depth]).c_str(), "r");
-	assert(fin != NULL);
-
-	while (fgets(buf, 65536, fin) != NULL) {
-		int len = strlen(buf);
-		if (len > 0 && buf[len - 1] == '\n') {
-			buf[len - 1] = '\0';
-			len--;
-		}
-		if (len == 0)
-			continue;
-
-		split_csv(buf, token);
-		assert(token.size() == column_name.size());
-
-		bool isWhere = true;
-		for (i = 0; i < where.size(); i++)
-		{
-			int h1 = myhash(where[i].c1.c_str());
-			int h2;
-			for (j = 0; j < column_name.size(); j++)
-			{
-				h2 = myhash(column_name[j].c_str());
-				if (h1 == h2)
-				{
-					int n2 = atoi(where[i].c2.c_str());
-					int n = atoi(token[j].c_str());
-					if ((where[i].type == 0 && n >= n2) || (where[i].type == 1 && n <= n2)) isWhere = false;
-				}
-			}
-			if (!isWhere) break;
-		}
-		if (!isWhere) continue;
-
-		for (i = 0; i < column_name.size(); i++)
-			if (m.find(column_name[i]) != m.end())
-				row[m.find(column_name[i]) -> second] = token[i];
-
-		select(table, m, row, where, depth+1);
+	void show() const
+	{
+		fprintf(stderr, "Condition (%s) (%d) (%s)\n", lhs.c_str(), op, rhs.c_str());
 	}
-
-	fclose(fin);
+};
+void printStr2Int(const map<string, int>& s2i)
+{
+	for (map<string, int>::const_iterator it = s2i.begin(); it != s2i.end(); ++it)
+		fprintf(stderr, "s2i: (%s) => (%d)\n", (it -> first).c_str(), it -> second);
 }
+
+// Data
+map<string, vector<string> > table2col;
+map<string, vector<string> > table2pkey;
+map<string, vector<string> > col2data;
+map<string, int> col2type;  // 0 for int, other for varchar
+#define TYPE_INT 0
+
+// Index / Helper / Aux
+map<string, string> col2table;
+
+// Output
+vector<string> result;
 
 void create(const string& table, const vector<string>& column,
 	const vector<string>& type, const vector<string>& key)
 {
-	table2name[table] = column;
-	table2type[table] = type;
+	table2col[table] = column;
 	table2pkey[table] = key;
+	for (int i = 0; i < type.size(); i++)
+	{
+		if (type[i] == "INTEGER")
+			col2type[column[i]] = TYPE_INT;
+		else
+		{
+			int len = -1;
+			sscanf(type[i].c_str(), "VARCHAR(%d)", &len);
+			col2type[column[i]] = len;
+		}
+		col2table[column[i]] = table;
+	}
 }
 
 void train(const vector<string>& query, const vector<double>& weight)
@@ -101,16 +73,14 @@ void train(const vector<string>& query, const vector<double>& weight)
 
 void load(const string& table, const vector<string>& row)
 {
-	FILE *fout;
-	int i;
-
-	fout = fopen(((string) "data/" + table).c_str(), "w");
-	assert(fout != NULL);
-
-	for (i = 0; i < row.size(); i++)
-		fprintf(fout, "%s\n", row[i].c_str());
-
-	fclose(fout);
+	vector<string> col = table2col[table];
+	vector<string> token;
+	for (int i = 0; i < row.size(); i++)
+	{
+		split_csv(row[i].c_str(), token);
+		for (int j = 0; j < col.size(); j++)
+			col2data[col[j]].push_back(token[j]);
+	}
 }
 
 void preprocess()
@@ -118,77 +88,143 @@ void preprocess()
 	// I am too clever; I don't need it.
 }
 
+vector<map<string, int> > colGroup;
+vector<vector<Condition*> > where, condJoin;
+vector<string> row;
+void select(int tid)
+{
+	fprintf(stderr, "select begin\n");
+	if (tid >= colGroup.size())
+	{
+		result.push_back(row[0]);
+		for (int i = 1; i < row.size(); i++)
+			result.back().append("," + row[i]);
+	}
+	else
+	{
+		for (int i = 0; i < col2data[colGroup[tid].begin() -> first].size(); i++)
+		{
+			int lhs, rhs;
+			bool pass = true;
+			for (int j = 0; j < where[tid].size() && pass; j++)
+			{
+				if (where[tid][j] -> rhs[0] == '\'')  // VARCHAR - Condition::EQ
+					pass = col2data[where[tid][j] -> lhs][i] == where[tid][j] -> rhs;
+				else  // INTEGER
+				{
+					sscanf(col2data[where[tid][j] -> lhs][i].c_str(), "%d", &lhs);
+					sscanf((where[tid][j] -> rhs).c_str(), "%d", &rhs);
+					if (where[tid][j] -> op == Condition::LT)
+						pass = lhs < rhs;
+					else if (where[tid][j] -> op == Condition::GT)
+						pass = lhs > rhs;
+					else  // Condition::EQ
+						pass = lhs == rhs;
+				}
+			}
+			if (!pass)
+				continue;
+			for (map<string, int>::iterator it = colGroup[tid].begin(); it != colGroup[tid].end(); ++it)
+				if (it -> second >= 0)
+					row[it -> second] = col2data[it -> first][i];
+			for (int j = 0; j < condJoin[tid].size(); j++)
+				condJoin[tid][j] -> rhs = col2data[condJoin[tid][j] -> rhs][i];
+			select(tid + 1);
+		}
+	}
+}
+vector<string> output;
+map<string, int> table;
 void execute(const string& sql)
 {
-	vector<string> token, output, table, row;
-	vector<condition> where;
-
-	map<string, int> m;
-	int i;
-
-	result.clear();
-
-	if (strstr(sql.c_str(), "INSERT") != NULL) {
+	fprintf(stderr, "execute begin\n");
+	if (strstr(sql.c_str(), "INSERT") != NULL)
+	{
 		fprintf(stderr, "Sorry, I give up.\n");
 		exit(1);
 	}
 
-	output.clear();
-	table.clear();
-	where.clear();
+	vector<string> token;
 	tokenize(sql.c_str(), token);
-	for (i = 0; i < token.size(); i++) {
-		if (token[i] == "SELECT" || token[i] == ",")
-			continue;
-		if (token[i] == "FROM")
-			break;
-		output.push_back(token[i]);
-	}
-	for (i++; i < token.size(); i++) {
-		if (token[i] == "," || token[i] == ";")
-			continue;
-		if (token[i] == "WHERE")
-			break;
-		table.push_back(token[i]);
-	}
-	for (i++; i < token.size(); i++) {
-		if (token[i] == ";" || token[i] == "AND")
-			continue;
-		assert(i+2 < token.size());
-		condition con;
-		con.c1 = token[i];
-		con.c2 = token[i+2];
-		if (token[i+1] == "<") con.type = 0;
-		else if (token[i+1] == ">") con.type = 1;
-		else if (token[i+1] == "=") con.type = 2;
-		where.push_back(con);
-		i += 2;
-	}
 
-	m.clear();
-	for (i = 0; i < output.size(); i++)
-		m[output[i]] = i;
+	int iToken = 0;
+	while (++iToken < token.size() && token[iToken] != "FROM")
+		if (token[iToken] != ",")
+			output.push_back(token[iToken]);
+	int iTable = 0;
+	while (++iToken < token.size() && token[iToken] != "WHERE")
+		if (token[iToken] != "," && token[iToken] != ";")
+			table[token[iToken]] = iTable++;
+	colGroup.resize(iTable);
+	for (int i = 0; i < output.size(); i++)
+		colGroup[table[col2table[output[i]]]][output[i]] = i;
+	row.resize(output.size());
+	output.clear();
+	for (map<string, int>::iterator it = table.begin(); it != table.end(); ++it)
+		if (colGroup[it -> second].size() == 0)
+			colGroup[it -> second][table2pkey[it -> first][0]] = -1;
 
+	fprintf(stderr, "from end & where begin\n");
+
+	where.resize(iTable);
+	condJoin.resize(iTable);
+	iToken++;
+	while (iToken < token.size())
+		if (token[iToken] == "AND" || token[iToken] == ";")
+			iToken++;
+		else
+		{
+			switch (token[iToken+1][0])
+			{
+			case '<':
+				where[table[col2table[token[iToken]]]].push_back(new Condition(token[iToken], token[iToken+2], Condition::LT));
+				break;
+			case '>':
+				where[table[col2table[token[iToken]]]].push_back(new Condition(token[iToken], token[iToken+2], Condition::GT));
+				break;
+			case '=':
+				if (token[iToken+2][0] == '\'' || ('0' <= token[iToken+2][0] && token[iToken+2][0] <= '9'))
+					where[table[col2table[token[iToken]]]].push_back(new Condition(token[iToken], token[iToken+2], Condition::EQ));
+				else
+				{
+					string colL = token[iToken], colR = token[iToken+2];
+					if (table[colL] < table[colR])
+					{
+						string t = colL;
+						colL = colR;
+						colR = t;
+					}
+					Condition* cond = new Condition(colL, colR, Condition::EQ);
+					where[table[col2table[colL]]].push_back(cond);
+					condJoin[table[col2table[colR]]].push_back(cond);
+				}
+				break;
+			default:
+				where[table[col2table[token[iToken]]]].push_back(new Condition(token[iToken], token[iToken+2], Condition::NUL));
+			}
+			iToken += 3;
+		}
+	table.clear();
+
+	select(0);
 	row.clear();
-	row.resize(output.size(), "");
 
-	select(table, m, row, where, 0);
+	colGroup.clear();
+	for (int i = 0; i < where.size(); i++)
+		for (int j = 0; j < where[i].size(); j++)
+			delete where[i][j];
+	where.clear();
+	condJoin.clear();
 }
 
 int next(char *row)
 {
 	if (result.size() == 0)
-		return (0);
+		return 0;
 	strcpy(row, result.back().c_str());
 	result.pop_back();
-
-	/*
-	 * This is for debug only. You should avoid unnecessary output
-	 * in your submission, which will hurt the performance.
-	 */
-	//printf("%s\n", row);
-
-	return (1);
+	printf("NEXT: (%s)\n", row);
+	return 1;
 }
 
 void close()
