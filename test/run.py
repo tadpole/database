@@ -8,19 +8,26 @@ def addhash(a, b):
 
 def runquery(c, query):
 	lhash = []
+	res = []
 	for row in c.execute(query):
-		lhash.append(hash(','.join(repr(item.encode('utf8') if isinstance(item, unicode) else item) for item in row)))
-	return reduce(addhash, lhash)
+		s = ','.join(repr(item.encode('utf8') if isinstance(item, unicode) else item) for item in row)
+		res.append(s)
+		lhash.append(hash(s))
+	if lhash == []:
+		return ("0", [])
+	return (reduce(addhash, lhash),res)
 
 def run(path):
 	f = open(path+"/query", 'r')
 	l = f.readlines()
-	conn = sqlite3.connect('example.db')
+	conn = sqlite3.connect(path+'.db')
 	c = conn.cursor()
 	truepath = []
 	for q in l[1:]:
 		q = q[:-1]
-		truepath.append(runquery(c, q))
+		res = runquery(c, q)
+		truepath.append(res[0])
+		# print res[1]
 	conn.close()
 	f.close()
 	return truepath

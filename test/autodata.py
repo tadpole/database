@@ -10,7 +10,7 @@ max_char_size = 10
 def gendata(path, table):
 	f = open(path+'/schema', 'w')
 	print >> f, len(table)
-	conn = sqlite3.connect('example.db')
+	conn = sqlite3.connect(path+'.db')
 	c = conn.cursor()
 	ct = ""
 	ts = []
@@ -32,7 +32,7 @@ def gendata(path, table):
 		for i in col_char:
 			print >> f, i+"\tVARCHAR(100)"
 			ctl.append(i+" TEXT")
-		ts.append(col_pk+col_int+col_char)
+		ts.append((col_pk, col_int, col_char))
 		ct += ",".join(ctl)
 		ct += ")"
 		c.execute(ct)
@@ -71,13 +71,13 @@ def gendata(path, table):
 	return ts
 
 def gendata1(qnum):
-	f = open('example.db', 'w')
+	f = open('Project.db', 'w')
 	f.close()
 	tables = [("project", 1, 12, 10, 10)]
 	ts = gendata("Project", tables)
-	conn = sqlite3.connect('example.db')
+	conn = sqlite3.connect('Project.db')
 	c = conn.cursor()	
-	t = ts[0]	
+	t = ts[0][0]+ts[0][1]+ts[0][2]
 	f = open("Project"+'/query', 'w')
 	print >> f, qnum
 	for ik in range(qnum):
@@ -85,12 +85,38 @@ def gendata1(qnum):
 		random.shuffle(li)
 		n = random.randint(1, len(t))
 		tt = [t[i] for i in li[:n]]
-		query=  "SELECT "+" , ".join(tt)+" FROM " + tables[0][0] + ";"
+		query = "SELECT "+" , ".join(tt)+" FROM " + tables[0][0] + ";"
 		print >> f, query
-		print runquery(c, query)
+		# print runquery(c, query)
 	conn.commit()
 	conn.close()
 
+def gendata2(qnum):
+	f= open('Join.db', 'w')
+	f.close()
+	tables = [("join1", 1, 10, 0, 10), ("join2", 1, 12, 1, 20)]
+	ts = gendata("Join", tables)
+	conn = sqlite3.connect('Join.db')
+	c = conn.cursor()
+	t = ts[0][0]+ts[0][1]+ts[0][2]+ts[1][0]+ts[1][1]+ts[1][2]
+	f = open("Join"+"/query", 'w')
+	print >> f, qnum
+	for ik in range(qnum):
+		li = range(len(t))
+		random.shuffle(li)
+		n = random.randint(1, len(t))
+		tt = [t[i] for i in li[:n]]
+		query = "SELECT "+" , ".join(tt)+" FROM " + tables[0][0] + " , "+tables[1][0]
+		a = random.randint(0, len(ts[0][1])-1)
+		b = random.randint(0, len(ts[1][1])-1)
+		query += " WHERE "+ts[0][1][a]+" = "+ts[1][1][b] + " ; "
+		print query
+		print >> f, query
+		print runquery(c, query)
+	
+	conn.commit()
+	conn.close()
 
 if __name__ == "__main__":
-	gendata1(10)
+	# gendata1(10)
+	gendata2(10)
