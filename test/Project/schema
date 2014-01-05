@@ -1,6 +1,6 @@
 1
 project
-33
+23
 project_id0	INTEGER
 project_int0	INTEHER
 project_int1	INTEHER
@@ -14,25 +14,15 @@ project_int8	INTEHER
 project_int9	INTEHER
 project_int10	INTEHER
 project_int11	INTEHER
-project_int12	INTEHER
-project_int13	INTEHER
-project_int14	INTEHER
-project_int15	INTEHER
-project_int16	INTEHER
-project_int17	INTEHER
-project_int18	INTEHER
-project_int19	INTEHER
-project_int20	INTEHER
-project_int21	INTEHER
-project_int22	INTEHER
-project_int23	INTEHER
-project_int24	INTEHER
-project_int25	INTEHER
-project_int26	INTEHER
-project_int27	INTEHER
-project_int28	INTEHER
-project_int29	INTEHER
-project_int30	INTEHER
-project_int31	INTEHER
+project_char0	VARCHAR(100)
+project_char1	VARCHAR(100)
+project_char2	VARCHAR(100)
+project_char3	VARCHAR(100)
+project_char4	VARCHAR(100)
+project_char5	VARCHAR(100)
+project_char6	VARCHAR(100)
+project_char7	VARCHAR(100)
+project_char8	VARCHAR(100)
+project_char9	VARCHAR(100)
 1
 project_id0

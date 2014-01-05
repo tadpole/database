@@ -1,6 +1,7 @@
 import sqlite3
 import random
 import os
+from run import *
 
 max_int = 100
 max_char_size = 10
@@ -69,36 +70,27 @@ def gendata(path, table):
 	c.close()
 	return ts
 
-def hash(s):
-	return os.popen('./hash "'+s+'"').read()[:-1]
-
-def addhash(a, b):
-	return hex((int(a,16)+int(b,16)) % (1 << 32)).upper()[2:-1]
-
-def gendata1():
+def gendata1(qnum):
 	f = open('example.db', 'w')
 	f.close()
-	tables = [("project", 1, 32, 0, 10000)]
+	tables = [("project", 1, 12, 10, 10)]
 	ts = gendata("Project", tables)
 	conn = sqlite3.connect('example.db')
 	c = conn.cursor()	
-	t = ts[0]
-	li = range(len(t))
-	random.shuffle(li)
-	n = random.randint(1, len(t))
-	tt = [t[i] for i in li[:n]]
+	t = ts[0]	
 	f = open("Project"+'/query', 'w')
-	print >> f, 1
-	query=  "SELECT "+" , ".join(tt)+" FROM " + tables[0][0] + ";"
-	print >> f, query
-	lhash = []
-	for row in c.execute(query):
-		lhash.append(hash(','.join(repr(item.encode('utf8') if isinstance(item, unicode) else item) for item in row)))
-	print reduce(addhash, lhash)
-	
+	print >> f, qnum
+	for ik in range(qnum):
+		li = range(len(t))
+		random.shuffle(li)
+		n = random.randint(1, len(t))
+		tt = [t[i] for i in li[:n]]
+		query=  "SELECT "+" , ".join(tt)+" FROM " + tables[0][0] + ";"
+		print >> f, query
+		print runquery(c, query)
 	conn.commit()
 	conn.close()
 
 
 if __name__ == "__main__":
-	gendata1()
+	gendata1(10)

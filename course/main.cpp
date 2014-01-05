@@ -9,7 +9,7 @@
 #include "./tool/hash.h"
 #include "./include/client.h"
 
-#define PATH		"../test/Project/"
+#define PATH		"test/"
 #define SCHEMA		(PATH "schema")
 #define STATISTIC	(PATH "statistic")
 #define QUERY		(PATH "query")
