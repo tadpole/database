@@ -6,7 +6,6 @@
 #include <cassert>
 
 #include "../include/client.h"
-#include "../tool/tokenize.h"
 #include "../tool/split_csv.h"
 
 using namespace std;
@@ -32,6 +31,21 @@ void printStr2Int(const map<string, int>& s2i)
 {
 	for (map<string, int>::const_iterator it = s2i.begin(); it != s2i.end(); ++it)
 		fprintf(stderr, "s2i: (%s) => (%d)\n", (it -> first).c_str(), it -> second);
+}
+void splitBySpace(const char* buf, vector<string>& token)
+{
+	char temp[65536];
+	token.clear();
+	for (int i = 0; buf[i]; i++)
+	{
+		if (buf[i] <= ' ')
+			continue;
+		int j = 0;
+		while (buf[i] > ' ')
+			temp[j++] = buf[i++];
+		temp[j] = '\0';
+		token.push_back(temp);
+	}
 }
 
 // Data
@@ -93,7 +107,7 @@ vector<vector<Condition*> > where, condJoin;
 vector<string> row;
 void select(int tid)
 {
-	fprintf(stderr, "select begin\n");
+	// fprintf(stderr, "select(%d) begin\n", tid);
 	if (tid >= colGroup.size())
 	{
 		result.push_back(row[0]);
@@ -137,17 +151,24 @@ vector<string> output;
 map<string, int> table;
 void execute(const string& sql)
 {
-	fprintf(stderr, "execute begin\n");
-	if (strstr(sql.c_str(), "INSERT") != NULL)
-	{
-		fprintf(stderr, "Sorry, I give up.\n");
-		exit(1);
-	}
+	// fprintf(stderr, "execute begin\n");
 
 	vector<string> token;
-	tokenize(sql.c_str(), token);
-
+	splitBySpace(sql.c_str(), token);
 	int iToken = 0;
+
+	if (token[0] == "INSERT")
+	{
+		string tableName = token[2];
+		for(iToken = 4; iToken < token.size(); iToken += 4)
+		{
+			output.push_back(token[iToken+1]);
+		}
+		load(tableName, output);
+		output.clear();
+		return;
+	}
+
 	while (++iToken < token.size() && token[iToken] != "FROM")
 		if (token[iToken] != ",")
 			output.push_back(token[iToken]);
@@ -164,7 +185,7 @@ void execute(const string& sql)
 		if (colGroup[it -> second].size() == 0)
 			colGroup[it -> second][table2pkey[it -> first][0]] = -1;
 
-	fprintf(stderr, "from end & where begin\n");
+	// fprintf(stderr, "from end & where begin\n");
 
 	where.resize(iTable);
 	condJoin.resize(iTable);
@@ -188,7 +209,7 @@ void execute(const string& sql)
 				else
 				{
 					string colL = token[iToken], colR = token[iToken+2];
-					if (table[colL] < table[colR])
+					if (table[col2table[colL]] < table[col2table[colR]])
 					{
 						string t = colL;
 						colL = colR;
@@ -223,7 +244,7 @@ int next(char *row)
 		return 0;
 	strcpy(row, result.back().c_str());
 	result.pop_back();
-	printf("NEXT: (%s)\n", row);
+	// printf("NEXT: (%s)\n", row);
 	return 1;
 }
 
