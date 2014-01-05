@@ -1,0 +1,34 @@
+2
+join1
+11
+join1_id0	INTEGER
+join1_int0	INTEHER
+join1_int1	INTEHER
+join1_int2	INTEHER
+join1_int3	INTEHER
+join1_int4	INTEHER
+join1_int5	INTEHER
+join1_int6	INTEHER
+join1_int7	INTEHER
+join1_int8	INTEHER
+join1_int9	INTEHER
+1
+join1_id0
+join2
+14
+join2_id0	INTEGER
+join2_int0	INTEHER
+join2_int1	INTEHER
+join2_int2	INTEHER
+join2_int3	INTEHER
+join2_int4	INTEHER
+join2_int5	INTEHER
+join2_int6	INTEHER
+join2_int7	INTEHER
+join2_int8	INTEHER
+join2_int9	INTEHER
+join2_int10	INTEHER
+join2_int11	INTEHER
+join2_char0	VARCHAR(100)
+1
+join2_id0
