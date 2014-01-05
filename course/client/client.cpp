@@ -45,6 +45,7 @@ void splitBySpace(const char* buf, vector<string>& token)
 			temp[j++] = buf[i++];
 		temp[j] = '\0';
 		token.push_back(temp);
+		i--;
 	}
 }
 
@@ -104,10 +105,13 @@ void preprocess()
 
 vector<map<string, int> > colGroup;
 vector<vector<Condition*> > where, condJoin;
+vector<vector<string> > condJoinCol;
 vector<string> row;
+string indent;
 void select(int tid)
 {
-	// fprintf(stderr, "select(%d) begin\n", tid);
+	// fprintf(stderr, "%sselect(%d) begin\n", indent.c_str(), tid);
+	// indent.append("    ");
 	if (tid >= colGroup.size())
 	{
 		result.push_back(row[0]);
@@ -142,10 +146,12 @@ void select(int tid)
 				if (it -> second >= 0)
 					row[it -> second] = col2data[it -> first][i];
 			for (int j = 0; j < condJoin[tid].size(); j++)
-				condJoin[tid][j] -> rhs = col2data[condJoin[tid][j] -> rhs][i];
+				condJoin[tid][j] -> rhs = col2data[condJoinCol[tid][j]][i];
 			select(tid + 1);
 		}
 	}
+	// indent.resize(indent.size() - 4);
+	// fprintf(stderr, "%sselect(%d) end\n", indent.c_str(), tid);
 }
 vector<string> output;
 map<string, int> table;
@@ -189,6 +195,7 @@ void execute(const string& sql)
 
 	where.resize(iTable);
 	condJoin.resize(iTable);
+	condJoinCol.resize(iTable);
 	iToken++;
 	while (iToken < token.size())
 		if (token[iToken] == "AND" || token[iToken] == ";")
@@ -218,6 +225,7 @@ void execute(const string& sql)
 					Condition* cond = new Condition(colL, colR, Condition::EQ);
 					where[table[col2table[colL]]].push_back(cond);
 					condJoin[table[col2table[colR]]].push_back(cond);
+					condJoinCol[table[col2table[colR]]].push_back(colR);
 				}
 				break;
 			default:
@@ -227,6 +235,7 @@ void execute(const string& sql)
 		}
 	table.clear();
 
+	indent.clear();
 	select(0);
 	row.clear();
 
@@ -236,6 +245,7 @@ void execute(const string& sql)
 			delete where[i][j];
 	where.clear();
 	condJoin.clear();
+	condJoinCol.clear();
 }
 
 int next(char *row)
