@@ -1,5 +1,7 @@
 import os
 import sqlite3
+import sys
+
 def hash(s):
 	return os.popen('./hash "'+s+'"').read()[:-1]
 
@@ -33,4 +35,5 @@ def run(path):
 	return truepath
 
 if __name__ == "__main__":
-	print run('Project')
+	path = sys.argv[1]
+	print run(path)

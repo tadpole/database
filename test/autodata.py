@@ -70,6 +70,12 @@ def gendata(path, table):
 	c.close()
 	return ts
 
+def randlist(t, n):
+	li = range(len(t))
+	random.shuffle(li)
+	tt = [t[i] for i in li[:n]]
+	return tt
+
 def gendata1(qnum):
 	f = open('Project.db', 'w')
 	f.close()
@@ -81,11 +87,24 @@ def gendata1(qnum):
 	f = open("Project"+'/query', 'w')
 	print >> f, qnum
 	for ik in range(qnum):
-		li = range(len(t))
-		random.shuffle(li)
-		n = random.randint(1, len(t))
-		tt = [t[i] for i in li[:n]]
-		query = "SELECT "+" , ".join(tt)+" FROM " + tables[0][0] + ";"
+		tt = randlist(t, random.randint(1, len(t)))
+		query = "SELECT "+" , ".join(tt)+" FROM " + tables[0][0]
+		n = min(random.randint(1, 4), len(ts[0][1]))
+		query += " WHERE "
+		lint = randlist(ts[0][1], n)
+		assert(n != 0)
+		for i in range(n):
+			nn = random.randint(0, max_int)
+			choice = random.randint(0,1)
+			query += lint[i]
+			if (choice == 0):
+				query += " > "
+			else:
+				query += " < "
+			query += str(nn)
+			if (i != n-1): query += " AND "
+			else: query += " ;"
+		print query
 		print >> f, query
 		# print runquery(c, query)
 	conn.commit()
@@ -102,10 +121,7 @@ def gendata2(qnum):
 	f = open("Join"+"/query", 'w')
 	print >> f, qnum
 	for ik in range(qnum):
-		li = range(len(t))
-		random.shuffle(li)
-		n = random.randint(1, len(t))
-		tt = [t[i] for i in li[:n]]
+		tt = randlist(t, random.randint(1, len(t)))
 		query = "SELECT "+" , ".join(tt)+" FROM " + tables[0][0] + " , "+tables[1][0]
 		a = random.randint(0, len(ts[0][1])-1)
 		b = random.randint(0, len(ts[1][1])-1)
@@ -118,5 +134,5 @@ def gendata2(qnum):
 	conn.close()
 
 if __name__ == "__main__":
-	# gendata1(10)
-	gendata2(10)
+	gendata1(10)
+	# gendata2(10)
