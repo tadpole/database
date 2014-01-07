@@ -157,10 +157,8 @@ restart_2:
 
 		unsigned int checksum = 0;
 		while (next(buf2))
-		{
 			checksum += myhash(buf2);
-			//printf("%X\n", myhash(buf2));
-		}
+
 		printf("Checksum: %X\n--------\n", checksum);
 	}
 
