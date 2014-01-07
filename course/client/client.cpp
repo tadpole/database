@@ -58,9 +58,14 @@ map<string, int> col2type;  // 0 for int, other for varchar
 
 // Index / Helper / Aux
 map<string, string> col2table;
+map<string, double> col2w;
+map<string, map<string, vector<int> > > idx;
 
 // Output
 vector<string> result;
+
+// Alloc
+vector<string> token;
 
 void create(const string& table, const vector<string>& column,
 	const vector<string>& type, const vector<string>& key)
@@ -83,29 +88,55 @@ void create(const string& table, const vector<string>& column,
 
 void train(const vector<string>& query, const vector<double>& weight)
 {
-	// I am too clever; I don't need it.
+	for (int i = 0; i < query.size(); i++)
+	{
+		splitBySpace(query[i].c_str(), token);
+		int iToken = 0;
+		if (token[0] == "INSERT")
+			continue;
+		while (++iToken < token.size() && token[iToken] != "WHERE");
+		while (++iToken < token.size())
+			if (
+				token[iToken] != "AND" && token[iToken] != ";" &&
+				token[iToken] != "<" && token[iToken] != ">" && token[iToken] != "=" &&
+				token[iToken][0] != '\'' && !('0' <= token[iToken][0] && token[iToken][0] <= '9')
+				)
+			{
+				if (col2w.count(token[iToken]) == 0)
+				{
+					col2w[token[iToken]] = 0;
+					// fprintf(stderr, "To be indexed: %s.\n", token[iToken].c_str());
+				}
+				col2w[token[iToken]] += weight[i];
+			}
+	}
 }
 
 void load(const string& table, const vector<string>& row)
 {
 	vector<string> col = table2col[table];
-	vector<string> token;
 	for (int i = 0; i < row.size(); i++)
 	{
 		split_csv(row[i].c_str(), token);
 		for (int j = 0; j < col.size(); j++)
+		{
 			col2data[col[j]].push_back(token[j]);
+			if (col2w.count(col[j]) > 0)
+				idx[col[j]][token[j]].push_back(col2data[col[j]].size() - 1);
+		}
+		token.clear();
 	}
 }
 
 void preprocess()
 {
-	// I am too clever; I don't need it.
+	// Build index in load, so that INSERT can use it directly.
 }
 
 vector<map<string, int> > colGroup;
 vector<vector<Condition*> > where, condJoin;
 vector<vector<string> > condJoinCol;
+vector<int> tableSize;
 vector<string> row;
 string indent;
 void select(int tid)
@@ -120,8 +151,27 @@ void select(int tid)
 	}
 	else
 	{
-		for (int i = 0; i < col2data[colGroup[tid].begin() -> first].size(); i++)
+		int minCond = -1, minCondIdx = -1;
+		for (int j = 0; j < where[tid].size() && (where[tid][j] -> op) == Condition::EQ; j++)
+			if (
+				idx.count(where[tid][j] -> lhs) > 0 &&
+				(minCond == -1 || idx[where[tid][j] -> lhs][where[tid][j] -> rhs].size() < minCond)
+				)
+				minCondIdx = j, minCond = idx[where[tid][j] -> lhs][where[tid][j] -> rhs].size();
+		vector<int>* condCand = NULL;
+		if (minCond != -1)
 		{
+			condCand = &idx[where[tid][minCondIdx] -> lhs][where[tid][minCondIdx] -> rhs];
+			// fprintf(stderr, "Using index for %s!\n", (where[tid][minCondIdx] -> lhs).c_str());
+		}
+		for (
+			int iCond = 0, i = 0;
+			(minCond != -1)?(iCond < condCand -> size()):(i < tableSize[tid]);
+			iCond++, i++  // Cannot update i with (*condCand)[iCond] here, size() not checked yet.
+			)
+		{
+			if (minCond != -1)
+				i = (*condCand)[iCond];
 			int lhs, rhs;
 			bool pass = true;
 			for (int j = 0; j < where[tid].size() && pass; j++)
@@ -143,8 +193,7 @@ void select(int tid)
 			if (!pass)
 				continue;
 			for (map<string, int>::iterator it = colGroup[tid].begin(); it != colGroup[tid].end(); ++it)
-				if (it -> second >= 0)
-					row[it -> second] = col2data[it -> first][i];
+				row[it -> second] = col2data[it -> first][i];
 			for (int j = 0; j < condJoin[tid].size(); j++)
 				condJoin[tid][j] -> rhs = col2data[condJoinCol[tid][j]][i];
 			select(tid + 1);
@@ -154,12 +203,12 @@ void select(int tid)
 	// fprintf(stderr, "%sselect(%d) end\n", indent.c_str(), tid);
 }
 vector<string> output;
+vector<string> tableName;
 map<string, int> table;
 void execute(const string& sql)
 {
 	// fprintf(stderr, "execute begin\n");
 
-	vector<string> token;
 	splitBySpace(sql.c_str(), token);
 	int iToken = 0;
 
@@ -181,15 +230,38 @@ void execute(const string& sql)
 	int iTable = 0;
 	while (++iToken < token.size() && token[iToken] != "WHERE")
 		if (token[iToken] != "," && token[iToken] != ";")
-			table[token[iToken]] = iTable++;
+		{
+			tableName.push_back(token[iToken]);
+			tableSize.push_back(col2data[table2pkey[token[iToken]][0]].size());
+		}
+	iTable = tableSize.size();
+	// BEGIN Sort table by size
+	for (int i = iTable; i >= 2; i--)
+	{
+		bool ok = true;
+		for (int j = 0; j < i - 1; j++)
+			if (tableSize[j] > tableSize[j + 1])
+			{
+				ok = false;
+				string ts = tableName[j];
+				tableName[j] = tableName[j + 1];
+				tableName[j + 1] = ts;
+				int ti = tableSize[j];
+				tableSize[j] = tableSize[j + 1];
+				tableSize[j + 1] = ti;
+			}
+		if (ok)
+			break;
+	}
+	// END Sort table by size
+	for (int i = 0; i < iTable; i++)
+		table[tableName[i]] = i;
+	tableName.clear();
 	colGroup.resize(iTable);
 	for (int i = 0; i < output.size(); i++)
 		colGroup[table[col2table[output[i]]]][output[i]] = i;
 	row.resize(output.size());
 	output.clear();
-	for (map<string, int>::iterator it = table.begin(); it != table.end(); ++it)
-		if (colGroup[it -> second].size() == 0)
-			colGroup[it -> second][table2pkey[it -> first][0]] = -1;
 
 	// fprintf(stderr, "from end & where begin\n");
 
@@ -233,13 +305,32 @@ void execute(const string& sql)
 			}
 			iToken += 3;
 		}
+	token.clear();
 	table.clear();
+	// BEGIN Condition table by intelligence
+	for (int tid = 0; tid < iTable; tid++)
+		for (int i = where[tid].size(); i >= 2; i--)
+		{
+			bool ok = true;
+			for (int j = 0; j < i - 1; j++)
+				if ((where[tid][j] -> op) != Condition::EQ && (where[tid][j + 1] -> op) == Condition::EQ)
+				{
+					ok = false;
+					Condition* t = where[tid][j];
+					where[tid][j] = where[tid][j + 1];
+					where[tid][j + 1] = t;
+				}
+			if (ok)
+				break;
+		}
+	// BEGIN Condition table by intelligence
 
 	indent.clear();
 	select(0);
 	row.clear();
 
 	colGroup.clear();
+	tableSize.clear();
 	for (int i = 0; i < where.size(); i++)
 		for (int j = 0; j < where[i].size(); j++)
 			delete where[i][j];
