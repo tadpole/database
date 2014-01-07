@@ -5,6 +5,9 @@
 #include <map>
 #include <cassert>
 
+#include "bdb/dbstl_vector.h"
+using namespace dbstl;
+
 #include "../include/client.h"
 #include "../tool/split_csv.h"
 
@@ -101,6 +104,10 @@ void load(const string& table, const vector<string>& row)
 void preprocess()
 {
 	// I am too clever; I don't need it.
+	db_vector<string> ss;
+	ss.push_back("hahaha");
+	ss.push_back("hehe");
+	fprintf(stderr, "DBTest: %s\n", ss[1].c_str());
 }
 
 vector<map<string, int> > colGroup;
