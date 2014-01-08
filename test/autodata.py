@@ -127,7 +127,7 @@ def gendata1(qnum):
 			query += str(nn)
 			if (i != n-1): query += " AND "
 			else: query += " ;"
-		print query
+		# print query
 		print >> f, query
 		# print runquery(c, query)
 	conn.commit()
@@ -136,7 +136,7 @@ def gendata1(qnum):
 def gendata2(qnum):
 	f= open('Join.db', 'w')
 	f.close()
-	tables = [("join1", 1, 10, 0, 15), ("join2", 1, 12, 1, 20)]
+	tables = [("join1", 1, 10, 0, 1000), ("join2", 1, 12, 1, 1200)]
 	ts = gendata("Join", tables)
 	conn = sqlite3.connect('Join.db')
 	c = conn.cursor()
@@ -162,4 +162,4 @@ def gendata2(qnum):
 
 if __name__ == "__main__":
 	# gendata1(10)
-	gendata2(20)
+	gendata2(100)

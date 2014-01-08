@@ -20,6 +20,13 @@ def runquery(c, query):
 	return (reduce(addhash, lhash),res)
 
 def run(path):
+	logname = path+".sol"
+	if os.path.isfile(logname):
+		f1 = open(logname, 'r')
+		res = eval(f1.readlines()[0])
+		f1.close()
+		return res
+	f1 = open(logname, 'w')
 	f = open(path+"/query", 'r')
 	l = f.readlines()
 	conn = sqlite3.connect(path+'.db')
@@ -33,6 +40,8 @@ def run(path):
 		# print res[1]
 	conn.close()
 	f.close()
+	print >> f1, truepath
+	f1.close()
 	return truepath
 
 if __name__ == "__main__":
