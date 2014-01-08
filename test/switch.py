@@ -15,5 +15,7 @@ if __name__ == "__main__":
 	for l in ll:
 		if l[:8] == "Checksum":
 			myhash.append(l[10:])
+		elif l[:14] == "Response time:":
+			print "time: ", l[15:]
 
 	print myhash == truehash

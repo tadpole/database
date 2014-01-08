@@ -28,7 +28,8 @@ def run(path):
 	for q in l[1:]:
 		q = q[:-1]
 		res = runquery(c, q)
-		truepath.append(res[0])
+		if q[:6] != "INSERT":
+			truepath.append(res[0])
 		# print res[1]
 	conn.close()
 	f.close()
