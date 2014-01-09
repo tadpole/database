@@ -172,6 +172,7 @@ void execute(const string& sql)
 
 	if (token[0] == "INSERT")
 	{
+		exit(0);
 		string tableName = token[2];
 		for(iToken = 4; iToken < token.size(); iToken += 4)
 		{
@@ -222,6 +223,7 @@ void execute(const string& sql)
 					where[table[col2table[token[iToken]]]].push_back(new Condition(token[iToken], token[iToken+2], Condition::EQ));
 				else
 				{
+					exit(0);
 					string colL = token[iToken], colR = token[iToken+2];
 					if (table[col2table[colL]] < table[col2table[colR]])
 					{
