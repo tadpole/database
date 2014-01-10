@@ -48,6 +48,24 @@ void splitBySpace(const char* buf, vector<string>& token)
 		i--;
 	}
 }
+struct valComp
+{
+	bool operator()(const string& lhs, const string& rhs) const
+	{
+		assert(lhs.size() > 0);
+		if (lhs[0] == '\'')
+			return lhs < rhs;
+		else
+		{
+			assert('0' <= lhs[0] && lhs[0] <= '9');
+			assert('0' <= rhs[0] && rhs[0] <= '9');
+			int l, r;
+			sscanf(lhs.c_str(), "%d", &l);
+			sscanf(rhs.c_str(), "%d", &r);
+			return l < r;
+		}
+	}
+};
 
 // Data
 map<string, vector<string> > table2col;
@@ -59,7 +77,7 @@ map<string, int> col2type;  // 0 for int, other for varchar
 // Index / Helper / Aux
 map<string, string> col2table;
 map<string, double> col2w;
-map<string, map<string, vector<int> > > idx;
+map<string, map<string, vector<int>, valComp> > idx;
 
 // Output
 vector<string> result;
@@ -127,10 +145,46 @@ void load(const string& table, const vector<string>& row)
 		token.clear();
 	}
 }
-
+typedef multimap<string, string, valComp> v2kMap;
 void preprocess()
 {
 	// Build index in load, so that INSERT can use it directly.
+	fprintf(stderr, "=====Test str=====\n");
+	map<string, string, valComp> test;
+	test["'2'"] = "zzz";
+	test["'3'"] = "xxx";
+	test["'123'"] = "xxx";
+	for (map<string, string, valComp>::iterator it = test.begin(); it != test.end(); ++it)
+		fprintf(stderr, "%s -> %s\n", (it -> first).c_str(), (it -> second).c_str());
+	fprintf(stderr, "=====Test int=====\n");
+	test.clear();
+	test["2"] = "zzz";
+	test["3"] = "xxx";
+	test["123"] = "xxx";
+	for (map<string, string, valComp>::reverse_iterator it = test.rbegin(); it != test.rend(); ++it)
+		fprintf(stderr, "%s -> %s\n", (it -> first).c_str(), (it -> second).c_str());
+	fprintf(stderr, "=====Test multi=====\n");
+	v2kMap test2;
+	test2.insert(pair<string, string>("2", "xxx"));
+	test2.insert(pair<string, string>("1", "zzz"));
+	test2.insert(pair<string, string>("4", "aaa"));
+	test2.insert(pair<string, string>("4", "qqq"));
+	test2.insert(pair<string, string>("3", "qqq"));
+	test2.insert(pair<string, string>("6", "qqq"));
+	test2.insert(pair<string, string>("5", "qqq"));
+	for (v2kMap::iterator it = test2.begin(); it != test2.end(); ++it)
+		fprintf(stderr, "%s -> %s\n", (it -> first).c_str(), (it -> second).c_str());
+	fprintf(stderr, "=====Test EQ=====\n");
+	pair<v2kMap::iterator, v2kMap::iterator> pit = test2.equal_range("4");
+	for (v2kMap::iterator it = pit.first; it != pit.second; ++it)
+		fprintf(stderr, "%s -> %s\n", (it -> first).c_str(), (it -> second).c_str());
+	fprintf(stderr, "=====Test LT 3=====\n");
+	for (v2kMap::iterator it = test2.begin(); it != test2.lower_bound("3"); ++it)
+		fprintf(stderr, "%s -> %s\n", (it -> first).c_str(), (it -> second).c_str());
+	fprintf(stderr, "=====Test GT 5=====\n");
+	for (v2kMap::iterator it = test2.upper_bound("5"); it != test2.end(); ++it)
+		fprintf(stderr, "%s -> %s\n", (it -> first).c_str(), (it -> second).c_str());
+	fprintf(stderr, "=====Test END.=====\n");
 }
 
 vector<map<string, int> > colGroup;
