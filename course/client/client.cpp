@@ -77,7 +77,8 @@ map<string, int> col2type;  // 0 for int, other for varchar
 // Index / Helper / Aux
 map<string, string> col2table;
 map<string, double> col2w;
-map<string, map<string, vector<int>, valComp> > idx;
+typedef multimap<string, int, valComp> v2idxs;
+map<string, v2idxs> idx;
 
 // Output
 vector<string> result;
@@ -140,7 +141,7 @@ void load(const string& table, const vector<string>& row)
 		{
 			col2data[col[j]].push_back(token[j]);
 			if (col2w.count(col[j]) > 0)
-				idx[col[j]][token[j]].push_back(col2data[col[j]].size() - 1);
+				idx[col[j]].insert(pair<string, int>(token[j], col2data[col[j]].size() - 1));
 		}
 		token.clear();
 	}
@@ -149,6 +150,7 @@ typedef multimap<string, string, valComp> v2kMap;
 void preprocess()
 {
 	// Build index in load, so that INSERT can use it directly.
+	/*
 	fprintf(stderr, "=====Test str=====\n");
 	map<string, string, valComp> test;
 	test["'2'"] = "zzz";
@@ -185,6 +187,7 @@ void preprocess()
 	for (v2kMap::iterator it = test2.upper_bound("5"); it != test2.end(); ++it)
 		fprintf(stderr, "%s -> %s\n", (it -> first).c_str(), (it -> second).c_str());
 	fprintf(stderr, "=====Test END.=====\n");
+	*/
 }
 
 vector<map<string, int> > colGroup;
@@ -207,25 +210,31 @@ void select(int tid)
 	{
 		int minCond = -1, minCondIdx = -1;
 		for (int j = 0; j < where[tid].size() && (where[tid][j] -> op) == Condition::EQ; j++)
-			if (
-				idx.count(where[tid][j] -> lhs) > 0 &&
-				(minCond == -1 || idx[where[tid][j] -> lhs][where[tid][j] -> rhs].size() < minCond)
-				)
-				minCondIdx = j, minCond = idx[where[tid][j] -> lhs][where[tid][j] -> rhs].size();
-		vector<int>* condCand = NULL;
+			if (idx.count(where[tid][j] -> lhs) > 0)
+			{
+				int count = idx[where[tid][j] -> lhs].count(where[tid][j] -> rhs);  // EFF: count is linear!
+				if (minCond == -1 || count < minCond)
+					minCondIdx = j, minCond = count;
+			}
+		v2idxs::iterator iBegin, iEnd;
 		if (minCond != -1)
 		{
-			condCand = &idx[where[tid][minCondIdx] -> lhs][where[tid][minCondIdx] -> rhs];
-			// fprintf(stderr, "Using index for %s!\n", (where[tid][minCondIdx] -> lhs).c_str());
+			pair<v2idxs::iterator, v2idxs::iterator> pit =
+				idx[where[tid][minCondIdx] -> lhs].equal_range(where[tid][minCondIdx] -> rhs);
+			iBegin = pit.first;
+			iEnd = pit.second;
+			// fprintf(stderr, "%sUsing index for %s!\n", indent.c_str(), (where[tid][minCondIdx] -> lhs).c_str());
 		}
+		v2idxs::iterator iIt = iBegin;
 		for (
-			int iCond = 0, i = 0;
-			(minCond != -1)?(iCond < condCand -> size()):(i < tableSize[tid]);
-			iCond++, i++  // Cannot update i with (*condCand)[iCond] here, size() not checked yet.
+			int i = 0;
+			(minCond != -1)?(iIt != iEnd):(i < tableSize[tid]);
+			((minCond != -1)?(++iIt):(iIt)), i++  // Cannot update i with *iIt here, size() not checked yet.
 			)
 		{
 			if (minCond != -1)
-				i = (*condCand)[iCond];
+				i = iIt -> second;
+			// fprintf(stderr, "%sLooping i = %d\n", indent.c_str(), i);
 			int lhs, rhs;
 			bool pass = true;
 			for (int j = 0; j < where[tid].size() && pass; j++)
