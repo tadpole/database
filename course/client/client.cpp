@@ -240,6 +240,7 @@ void select(int tid)
 				//int count = idx[where[tid][j] -> lhs].count(where[tid][j] -> rhs);  // EFF: count is linear!
 				//if (minCond == -1 || count < minCond)
 					minCondIdx = j;//, minCond = count;
+					break;
 			}
 		v2idxs::iterator iBegin, iEnd;
 		if (minCondIdx != -1)
