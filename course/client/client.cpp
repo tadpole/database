@@ -234,7 +234,7 @@ void select(int tid)
 	else
 	{
 		int minCondIdx = -1, minCond = -1;
-		for (int j = 0; j < where[tid].size() && (where[tid][j] -> op) == Condition::EQ; j++)
+		for (int j = 0; j < where[tid].size()/* && (where[tid][j] -> op) == Condition::EQ*/; j++)
 			if (idx.count(where[tid][j] -> lhs) > 0)
 			{
 				//int count = idx[where[tid][j] -> lhs].count(where[tid][j] -> rhs);  // EFF: count is linear!
@@ -245,10 +245,23 @@ void select(int tid)
 		v2idxs::iterator iBegin, iEnd;
 		if (minCondIdx != -1)
 		{
-			pair<v2idxs::iterator, v2idxs::iterator> pit =
-				idx[where[tid][minCondIdx] -> lhs].equal_range(where[tid][minCondIdx] -> rhs);
-			iBegin = pit.first;
-			iEnd = pit.second;
+			if (where[tid][minCondIdx] -> op == Condition::EQ)
+			{
+				pair<v2idxs::iterator, v2idxs::iterator> pit =
+					idx[where[tid][minCondIdx] -> lhs].equal_range(where[tid][minCondIdx] -> rhs);
+				iBegin = pit.first;
+				iEnd = pit.second;
+			}
+			else if (where[tid][minCondIdx] -> op == Condition::LT)
+			{
+				iBegin = idx[where[tid][minCondIdx] -> lhs].begin();
+				iEnd = idx[where[tid][minCondIdx] -> lhs].lower_bound(where[tid][minCondIdx] -> rhs);
+			}
+			else  // if (where[tid][minCondIdx] -> op == Condition::GT)
+			{
+				iBegin = idx[where[tid][minCondIdx] -> lhs].upper_bound(where[tid][minCondIdx] -> rhs);
+				iEnd = idx[where[tid][minCondIdx] -> lhs].end();
+			}
 			// fprintf(stderr, "%sUsing index for %s!\n", indent.c_str(), (where[tid][minCondIdx] -> lhs).c_str());
 		}
 		v2idxs::iterator iIt = iBegin;
