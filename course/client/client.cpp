@@ -150,6 +150,13 @@ typedef multimap<string, string, valComp> v2kMap;
 void preprocess()
 {
 	// Build index in load, so that INSERT can use it directly.
+	/* Learn whether it's uniform or zipf HERE!
+	for (map<string, int>::iterator it = col2type.begin(); it != col2type.end(); ++it)
+	{
+		if (it -> second != TYPE_INT)
+			continue;
+	}
+	*/
 	/*
 	fprintf(stderr, "=====Test str=====\n");
 	map<string, string, valComp> test;
@@ -194,6 +201,24 @@ vector<map<string, int> > colGroup;
 vector<vector<Condition*> > where, condJoin;
 vector<vector<string> > condJoinCol;
 vector<int> tableSize;
+double estimate(Condition* cond)
+{
+	if (idx.count(cond -> lhs) == 0)
+		return col2data[cond -> lhs].size();
+	if (cond -> op == Condition::EQ)
+		return 0;
+	int min, max, cur;
+	// assume at least one record, or begin()/rbegin() causes SegFault
+	sscanf((idx[cond -> lhs].begin() -> first).c_str(), "%d", &min);
+	sscanf((idx[cond -> lhs].rbegin() -> first).c_str(), "%d", &max);
+	sscanf((cond -> rhs).c_str(), "%d", &cur);
+	double rate, total = max - min + 1;
+	if (cond -> op == Condition::LT)
+		rate = (cur - min) / total;
+	else
+		rate = (max - cur) / total;
+	return rate * col2data[cond -> lhs].size();
+}
 vector<string> row;
 string indent;
 void select(int tid)
@@ -208,16 +233,16 @@ void select(int tid)
 	}
 	else
 	{
-		int minCond = -1, minCondIdx = -1;
+		int minCondIdx = -1, minCond = -1;
 		for (int j = 0; j < where[tid].size() && (where[tid][j] -> op) == Condition::EQ; j++)
 			if (idx.count(where[tid][j] -> lhs) > 0)
 			{
-				int count = idx[where[tid][j] -> lhs].count(where[tid][j] -> rhs);  // EFF: count is linear!
-				if (minCond == -1 || count < minCond)
-					minCondIdx = j, minCond = count;
+				//int count = idx[where[tid][j] -> lhs].count(where[tid][j] -> rhs);  // EFF: count is linear!
+				//if (minCond == -1 || count < minCond)
+					minCondIdx = j;//, minCond = count;
 			}
 		v2idxs::iterator iBegin, iEnd;
-		if (minCond != -1)
+		if (minCondIdx != -1)
 		{
 			pair<v2idxs::iterator, v2idxs::iterator> pit =
 				idx[where[tid][minCondIdx] -> lhs].equal_range(where[tid][minCondIdx] -> rhs);
@@ -228,11 +253,11 @@ void select(int tid)
 		v2idxs::iterator iIt = iBegin;
 		for (
 			int i = 0;
-			(minCond != -1)?(iIt != iEnd):(i < tableSize[tid]);
-			((minCond != -1)?(++iIt):(iIt)), i++  // Cannot update i with *iIt here, size() not checked yet.
+			(minCondIdx != -1)?(iIt != iEnd):(i < tableSize[tid]);
+			((minCondIdx != -1)?(++iIt):(iIt)), i++  // Cannot update i with *iIt here, size() not checked yet.
 			)
 		{
-			if (minCond != -1)
+			if (minCondIdx != -1)
 				i = iIt -> second;
 			// fprintf(stderr, "%sLooping i = %d\n", indent.c_str(), i);
 			int lhs, rhs;
@@ -376,7 +401,7 @@ void execute(const string& sql)
 		{
 			bool ok = true;
 			for (int j = 0; j < i - 1; j++)
-				if ((where[tid][j] -> op) != Condition::EQ && (where[tid][j + 1] -> op) == Condition::EQ)
+				if (estimate(where[tid][j]) > estimate(where[tid][j + 1]))
 				{
 					ok = false;
 					Condition* t = where[tid][j];
@@ -386,7 +411,7 @@ void execute(const string& sql)
 			if (ok)
 				break;
 		}
-	// BEGIN Condition table by intelligence
+	// END Condition table by intelligence
 
 	indent.clear();
 	select(0);
