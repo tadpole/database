@@ -5,6 +5,10 @@
 #include <map>
 #include <cassert>
 
+#include "bdb/dbstl_vector.h"
+#include "bdb/dbstl_map.h"
+using namespace dbstl;
+
 #include "../include/client.h"
 #include "../tool/split_csv.h"
 
@@ -52,14 +56,14 @@ void splitBySpace(const char* buf, vector<string>& token)
 // Data
 map<string, vector<string> > table2col;
 map<string, vector<string> > table2pkey;
-map<string, vector<string> > col2data;
+map<string, db_vector<string> > col2data;
 map<string, int> col2type;  // 0 for int, other for varchar
 #define TYPE_INT 0
 
 // Index / Helper / Aux
 map<string, string> col2table;
 map<string, double> col2w;
-map<string, map<string, vector<int> > > idx;
+map<string, db_map<string, vector<int> > > idx;
 
 // Output
 vector<string> result;
@@ -158,20 +162,20 @@ void select(int tid)
 				(minCond == -1 || idx[where[tid][j] -> lhs][where[tid][j] -> rhs].size() < minCond)
 				)
 				minCondIdx = j, minCond = idx[where[tid][j] -> lhs][where[tid][j] -> rhs].size();
-		vector<int>* condCand = NULL;
+		vector<int> condCand;
 		if (minCond != -1)
 		{
-			condCand = &idx[where[tid][minCondIdx] -> lhs][where[tid][minCondIdx] -> rhs];
+			condCand = idx[where[tid][minCondIdx] -> lhs][where[tid][minCondIdx] -> rhs];
 			// fprintf(stderr, "Using index for %s!\n", (where[tid][minCondIdx] -> lhs).c_str());
 		}
 		for (
 			int iCond = 0, i = 0;
-			(minCond != -1)?(iCond < condCand -> size()):(i < tableSize[tid]);
+			(minCond != -1)?(iCond < condCand.size()):(i < tableSize[tid]);
 			iCond++, i++  // Cannot update i with (*condCand)[iCond] here, size() not checked yet.
 			)
 		{
 			if (minCond != -1)
-				i = (*condCand)[iCond];
+				i = condCand[iCond];
 			int lhs, rhs;
 			bool pass = true;
 			for (int j = 0; j < where[tid].size() && pass; j++)
