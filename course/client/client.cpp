@@ -5,6 +5,8 @@
 #include <map>
 #include <cassert>
 
+#include "bdb/db_cxx.h"
+
 #include "../include/client.h"
 #include "../tool/split_csv.h"
 
@@ -27,11 +29,6 @@ struct Condition
 		fprintf(stderr, "Condition (%s) (%d) (%s)\n", lhs.c_str(), op, rhs.c_str());
 	}
 };
-void printStr2Int(const map<string, int>& s2i)
-{
-	for (map<string, int>::const_iterator it = s2i.begin(); it != s2i.end(); ++it)
-		fprintf(stderr, "s2i: (%s) => (%d)\n", (it -> first).c_str(), it -> second);
-}
 void splitBySpace(const char* buf, vector<string>& token)
 {
 	char temp[65536];
@@ -52,12 +49,16 @@ void splitBySpace(const char* buf, vector<string>& token)
 // Data
 map<string, vector<string> > table2col;
 map<string, vector<string> > table2pkey;
-map<string, vector<string> > col2data;
+DbEnv env(0);
+bool envInit = false;
+map<string, Db*> table2db;
 map<string, int> col2type;  // 0 for int, other for varchar
 #define TYPE_INT 0
 
 // Index / Helper / Aux
 map<string, string> col2table;
+map<string, int> col2offset;
+map<string, int> table2size;
 map<string, double> col2w;
 map<string, map<string, vector<int> > > idx;
 
@@ -66,24 +67,56 @@ vector<string> result;
 
 // Alloc
 vector<string> token;
+unsigned char* bufRecord = NULL;
+int bufRecordSize = -1;
 
+void init()
+{
+	envInit = true;
+	env.open("data", DB_INIT_MPOOL | DB_CREATE, 0);
+}
+string extract(void* rawData, const string& col)
+{
+	unsigned char* raw = (unsigned char*)rawData;
+	int* offset = (int*)&raw[col2offset[col]];
+	return string((const char*)&raw[*offset], *(offset+1) - *(offset));
+}
 void create(const string& table, const vector<string>& column,
 	const vector<string>& type, const vector<string>& key)
 {
 	table2col[table] = column;
 	table2pkey[table] = key;
+	int recordSize = 0;
 	for (int i = 0; i < type.size(); i++)
 	{
 		if (type[i] == "INTEGER")
+		{
 			col2type[column[i]] = TYPE_INT;
+			recordSize += 10;
+		}
 		else
 		{
 			int len = -1;
 			sscanf(type[i].c_str(), "VARCHAR(%d)", &len);
 			col2type[column[i]] = len;
+			recordSize += len;
 		}
 		col2table[column[i]] = table;
+		col2offset[column[i]] = i * 4;
 	}
+	recordSize += (column.size() + 1) * 4;
+	if (recordSize > bufRecordSize)
+	{
+		bufRecordSize = recordSize;
+		delete [] bufRecord;
+		bufRecord = new unsigned char[bufRecordSize];
+	}
+	if (!envInit)
+		init();
+	Db* db = new Db(&env, 0);
+	db -> open(NULL, table.c_str(), NULL, DB_RECNO, DB_CREATE | DB_EXCL, 0);
+	table2db[table] = db;
+	table2size[table] = 0;
 }
 
 void train(const vector<string>& query, const vector<double>& weight)
@@ -115,16 +148,23 @@ void train(const vector<string>& query, const vector<double>& weight)
 void load(const string& table, const vector<string>& row)
 {
 	vector<string> col = table2col[table];
+	Db* db = table2db[table];
 	for (int i = 0; i < row.size(); i++)
 	{
-		split_csv(row[i].c_str(), token);
-		for (int j = 0; j < col.size(); j++)
-		{
-			col2data[col[j]].push_back(token[j]);
-			if (col2w.count(col[j]) > 0)
-				idx[col[j]][token[j]].push_back(col2data[col[j]].size() - 1);
-		}
-		token.clear();
+		int bufPos = (col.size() + 1) * 4, colId = 0;
+		memcpy(&bufRecord[colId * 4], &bufPos, 4);
+		for (int j = 0; j < row[i].size(); j++)
+			if (row[i][j] != ',')
+				bufRecord[bufPos++] = row[i][j];
+			else
+			{
+				colId++;
+				memcpy(&bufRecord[colId * 4], &bufPos, 4);
+			}
+		colId++;
+		memcpy(&bufRecord[colId * 4], &bufPos, 4);
+		Dbt key, data(bufRecord, bufPos);
+		db -> put(NULL, &key, &data, DB_APPEND);  // TODO: bulk put
 	}
 }
 
@@ -133,6 +173,7 @@ void preprocess()
 	// Build index in load, so that INSERT can use it directly.
 }
 
+vector<string> tableName;
 vector<map<string, int> > colGroup;
 vector<vector<Condition*> > where, condJoin;
 vector<vector<string> > condJoinCol;
@@ -164,23 +205,31 @@ void select(int tid)
 			condCand = &idx[where[tid][minCondIdx] -> lhs][where[tid][minCondIdx] -> rhs];
 			// fprintf(stderr, "Using index for %s!\n", (where[tid][minCondIdx] -> lhs).c_str());
 		}
+		Dbc* cur = NULL;
+		table2db[tableName[tid]] -> cursor(NULL, &cur, DB_CURSOR_BULK);
+		Dbt key, data;
+		/*
 		for (
 			int iCond = 0, i = 0;
 			(minCond != -1)?(iCond < condCand -> size()):(i < tableSize[tid]);
 			iCond++, i++  // Cannot update i with (*condCand)[iCond] here, size() not checked yet.
 			)
+		*/
+		while (cur -> get(&key, &data, DB_NEXT) == 0)
 		{
+			/*
 			if (minCond != -1)
 				i = (*condCand)[iCond];
+			*/
 			int lhs, rhs;
 			bool pass = true;
 			for (int j = 0; j < where[tid].size() && pass; j++)
 			{
 				if (where[tid][j] -> rhs[0] == '\'')  // VARCHAR - Condition::EQ
-					pass = col2data[where[tid][j] -> lhs][i] == where[tid][j] -> rhs;
+					pass = extract(data.get_data(), where[tid][j] -> lhs) == where[tid][j] -> rhs;
 				else  // INTEGER
 				{
-					sscanf(col2data[where[tid][j] -> lhs][i].c_str(), "%d", &lhs);
+					sscanf(extract(data.get_data(), where[tid][j] -> lhs).c_str(), "%d", &lhs);
 					sscanf((where[tid][j] -> rhs).c_str(), "%d", &rhs);
 					if (where[tid][j] -> op == Condition::LT)
 						pass = lhs < rhs;
@@ -193,9 +242,9 @@ void select(int tid)
 			if (!pass)
 				continue;
 			for (map<string, int>::iterator it = colGroup[tid].begin(); it != colGroup[tid].end(); ++it)
-				row[it -> second] = col2data[it -> first][i];
+				row[it -> second] = extract(data.get_data(), it -> first);
 			for (int j = 0; j < condJoin[tid].size(); j++)
-				condJoin[tid][j] -> rhs = col2data[condJoinCol[tid][j]][i];
+				condJoin[tid][j] -> rhs = extract(data.get_data(), condJoinCol[tid][j]);
 			select(tid + 1);
 		}
 	}
@@ -203,7 +252,6 @@ void select(int tid)
 	// fprintf(stderr, "%sselect(%d) end\n", indent.c_str(), tid);
 }
 vector<string> output;
-vector<string> tableName;
 map<string, int> table;
 void execute(const string& sql)
 {
@@ -232,7 +280,7 @@ void execute(const string& sql)
 		if (token[iToken] != "," && token[iToken] != ";")
 		{
 			tableName.push_back(token[iToken]);
-			tableSize.push_back(col2data[table2pkey[token[iToken]][0]].size());
+			tableSize.push_back(table2size[token[iToken]]);
 		}
 	iTable = tableSize.size();
 	// BEGIN Sort table by size
@@ -256,7 +304,6 @@ void execute(const string& sql)
 	// END Sort table by size
 	for (int i = 0; i < iTable; i++)
 		table[tableName[i]] = i;
-	tableName.clear();
 	colGroup.resize(iTable);
 	for (int i = 0; i < output.size(); i++)
 		colGroup[table[col2table[output[i]]]][output[i]] = i;
@@ -329,6 +376,7 @@ void execute(const string& sql)
 	select(0);
 	row.clear();
 
+	tableName.clear();
 	colGroup.clear();
 	tableSize.clear();
 	for (int i = 0; i < where.size(); i++)
@@ -351,7 +399,9 @@ int next(char *row)
 
 void close()
 {
-	// I have nothing to do.
+	for (map<string, Db*>::iterator it = table2db.begin(); it != table2db.end(); ++it)
+		it -> second -> close(0);
+	env.close(0);
 }
 
 
