@@ -60,7 +60,8 @@ map<string, string> col2table;
 map<string, int> col2offset;
 map<string, int> table2size;
 map<string, double> col2w;
-map<string, map<string, vector<int> > > idx;
+map<string, Db*> col2idx;
+map<Db*, int> idx2offset;  // for indexed column, idx2offset[col2idx[c]] == col2offset[c]
 
 // Output
 vector<string> result;
@@ -69,6 +70,8 @@ vector<string> result;
 vector<string> token;
 unsigned char* bufRecord = NULL;
 int bufRecordSize = -1;
+unsigned char* bufKey = NULL;
+int bufKeySize = -1;
 
 void init()
 {
@@ -80,6 +83,14 @@ string extract(void* rawData, const string& col)
 	unsigned char* raw = (unsigned char*)rawData;
 	int* offset = (int*)&raw[col2offset[col]];
 	return string((const char*)&raw[*offset], *(offset+1) - *(offset));
+}
+int get_idx_key(Db* sdb, const Dbt* key, const Dbt* data, Dbt* result)
+{
+	unsigned char* raw = (unsigned char*)(data -> get_data());
+	int* offset = (int*)&raw[idx2offset[sdb]];
+	result -> set_data(&raw[*offset]);
+	result -> set_size(*(offset+1) - *(offset));
+	return 0;
 }
 void create(const string& table, const vector<string>& column,
 	const vector<string>& type, const vector<string>& key)
@@ -100,17 +111,15 @@ void create(const string& table, const vector<string>& column,
 			sscanf(type[i].c_str(), "VARCHAR(%d)", &len);
 			col2type[column[i]] = len;
 			recordSize += len;
+			if (len > bufKeySize)
+				bufKeySize = len;
 		}
 		col2table[column[i]] = table;
 		col2offset[column[i]] = i * 4;
 	}
 	recordSize += (column.size() + 1) * 4;
 	if (recordSize > bufRecordSize)
-	{
 		bufRecordSize = recordSize;
-		delete [] bufRecord;
-		bufRecord = new unsigned char[bufRecordSize];
-	}
 	if (!envInit)
 		init();
 	Db* db = new Db(&env, 0);
@@ -121,6 +130,10 @@ void create(const string& table, const vector<string>& column,
 
 void train(const vector<string>& query, const vector<double>& weight)
 {
+	// some init
+	bufRecord = new unsigned char[bufRecordSize];
+	bufKey = new unsigned char[bufKeySize];
+	// train
 	for (int i = 0; i < query.size(); i++)
 	{
 		splitBySpace(query[i].c_str(), token);
@@ -142,6 +155,16 @@ void train(const vector<string>& query, const vector<double>& weight)
 				}
 				col2w[token[iToken]] += weight[i];
 			}
+	}
+	for (map<string, double>::iterator it = col2w.begin(); it != col2w.end(); ++it)
+	{
+		Db* db = new Db(&env, 0);
+		db -> set_flags(DB_DUPSORT);
+		// db -> set_bt_compare();  // integer compare later
+		db -> open(NULL, (it -> first).c_str(), NULL, DB_BTREE, DB_CREATE | DB_EXCL, 0);
+		table2db[col2table[it -> first]] -> associate(NULL, db, get_idx_key, 0);
+		col2idx[it -> first] = db;
+		idx2offset[db] = col2offset[it -> first];
 	}
 }
 
@@ -165,6 +188,7 @@ void load(const string& table, const vector<string>& row)
 		memcpy(&bufRecord[colId * 4], &bufPos, 4);
 		Dbt key, data(bufRecord, bufPos);
 		db -> put(NULL, &key, &data, DB_APPEND);  // TODO: bulk put
+		table2size[table]++;
 	}
 }
 
@@ -195,32 +219,31 @@ void select(int tid)
 		int minCond = -1, minCondIdx = -1;
 		for (int j = 0; j < where[tid].size() && (where[tid][j] -> op) == Condition::EQ; j++)
 			if (
-				idx.count(where[tid][j] -> lhs) > 0 &&
-				(minCond == -1 || idx[where[tid][j] -> lhs][where[tid][j] -> rhs].size() < minCond)
+				col2idx.count(where[tid][j] -> lhs) > 0/* &&
+				(minCond == -1 || idx[where[tid][j] -> lhs][where[tid][j] -> rhs].size() < minCond)*/
 				)
-				minCondIdx = j, minCond = idx[where[tid][j] -> lhs][where[tid][j] -> rhs].size();
-		vector<int>* condCand = NULL;
-		if (minCond != -1)
+				minCondIdx = j, minCond = 0;
+		Dbc* cur = NULL;
+		Dbt *key = NULL, data;
+		if (minCondIdx != -1)
 		{
-			condCand = &idx[where[tid][minCondIdx] -> lhs][where[tid][minCondIdx] -> rhs];
+			Condition* cond = where[tid][minCondIdx];
+			col2idx[cond -> lhs] -> cursor(NULL, &cur, DB_CURSOR_BULK);
+			memcpy(bufKey, (cond -> rhs).c_str(), (cond -> rhs).size());
+			key = new Dbt(bufKey, (cond -> rhs).size());
 			// fprintf(stderr, "Using index for %s!\n", (where[tid][minCondIdx] -> lhs).c_str());
 		}
-		Dbc* cur = NULL;
-		table2db[tableName[tid]] -> cursor(NULL, &cur, DB_CURSOR_BULK);
-		Dbt key, data;
-		/*
-		for (
-			int iCond = 0, i = 0;
-			(minCond != -1)?(iCond < condCand -> size()):(i < tableSize[tid]);
-			iCond++, i++  // Cannot update i with (*condCand)[iCond] here, size() not checked yet.
-			)
-		*/
-		while (cur -> get(&key, &data, DB_NEXT) == 0)
+		else
 		{
-			/*
-			if (minCond != -1)
-				i = (*condCand)[iCond];
-			*/
+			table2db[tableName[tid]] -> cursor(NULL, &cur, DB_CURSOR_BULK);
+			key = new Dbt();
+		}
+		for (
+			int ret = cur -> get(key, &data, (minCondIdx != -1)?DB_SET:DB_NEXT);
+			ret == 0;
+			ret = cur -> get(key, &data, (minCondIdx != -1)?DB_NEXT_DUP:DB_NEXT)
+			)
+		{
 			int lhs, rhs;
 			bool pass = true;
 			for (int j = 0; j < where[tid].size() && pass; j++)
@@ -247,6 +270,8 @@ void select(int tid)
 				condJoin[tid][j] -> rhs = extract(data.get_data(), condJoinCol[tid][j]);
 			select(tid + 1);
 		}
+		cur -> close();
+		delete key;
 	}
 	// indent.resize(indent.size() - 4);
 	// fprintf(stderr, "%sselect(%d) end\n", indent.c_str(), tid);
@@ -399,9 +424,13 @@ int next(char *row)
 
 void close()
 {
+	for (map<string, Db*>::iterator it = col2idx.begin(); it != col2idx.end(); ++it)
+		it -> second -> close(0);
 	for (map<string, Db*>::iterator it = table2db.begin(); it != table2db.end(); ++it)
 		it -> second -> close(0);
 	env.close(0);
+	delete [] bufRecord;
+	delete [] bufKey;
 }
 
 
