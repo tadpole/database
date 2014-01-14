@@ -28,7 +28,7 @@ struct Condition
 	}
 	void show() const
 	{
-		fprintf(stderr, "Condition (%s) (%d) (%s)\n", lhs.c_str(), op, rhs.c_str());
+		fprintf(stderr, "Condition (%s) (%d) (%s): %lf\n", lhs.c_str(), op, rhs.c_str(), approx);
 	}
 };
 void splitBySpace(const char* buf, vector<string>& token)
@@ -154,7 +154,7 @@ void create(const string& table, const vector<string>& column,
 	if (!envInit)
 		init();
 	Db* db = new Db(&env, 0);
-	db -> open(NULL, table.c_str(), NULL, DB_RECNO, DB_CREATE | DB_EXCL, 0);
+	db -> open(NULL, table.c_str(), NULL, DB_RECNO, DB_CREATE | DB_TRUNCATE, 0);
 	table2db[table] = db;
 	table2size[table] = 0;
 }
@@ -192,7 +192,7 @@ void train(const vector<string>& query, const vector<double>& weight)
 		Db* db = new Db(&env, 0);
 		db -> set_flags(DB_DUPSORT);
 		db -> set_bt_compare(valComp2);
-		db -> open(NULL, (it -> first).c_str(), NULL, DB_BTREE, DB_CREATE | DB_EXCL, 0);
+		db -> open(NULL, (it -> first).c_str(), NULL, DB_BTREE, DB_CREATE | DB_TRUNCATE, 0);
 		table2db[col2table[it -> first]] -> associate(NULL, db, get_idx_key, 0);
 		col2idx[it -> first] = db;
 		idx2offset[db] = col2offset[it -> first];
@@ -246,10 +246,11 @@ double estimate(Condition* cond)
        col2idx[cond -> lhs] -> cursor(NULL, &cur, DB_CURSOR_BULK);
        Dbt key, data;
        cur -> get(&key, &data, DB_FIRST);
-       sscanf((const char*)(key.get_data()), "%d", &min);
+       sscanf(string((const char*)(key.get_data()), key.get_size()).c_str(), "%d", &min);
        cur -> get(&key, &data, DB_LAST);
-       sscanf((const char*)(key.get_data()), "%d", &max);
+       sscanf(string((const char*)(key.get_data()), key.get_size()).c_str(), "%d", &max);
        sscanf((cond -> rhs).c_str(), "%d", &val);
+       // fprintf(stderr, "estimate: [%d, %d] %d\n", min, max, val);
        double rate, total = max - min + 1.0;
        if (cond -> op == Condition::LT)
                rate = (val - min) / total;
@@ -472,6 +473,11 @@ void execute(const string& sql)
 			if (ok)
 				break;
 		}
+		/*
+		fprintf(stderr, "Table %s(%d):\n", tableName[tid].c_str(), tid);
+		for (int i = 0; i < where[tid].size(); i++)
+			where[tid][i] -> show();
+		*/
 	}
 	// END Sort Condition table by intelligence
 
