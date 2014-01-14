@@ -17,12 +17,14 @@ struct Condition
 	string lhs, rhs;
 	enum OP {LT, EQ, GT, NUL};
 	OP op;
-	Condition() {op = NUL;}
+	double approx;
+	Condition() {op = NUL; approx = -1;}
 	Condition(const string& lhs, const string& rhs, OP op)
 	{
 		this -> lhs = lhs;
 		this -> rhs = rhs;
 		this -> op = op;
+		approx = -1;
 	}
 	void show() const
 	{
@@ -44,6 +46,35 @@ void splitBySpace(const char* buf, vector<string>& token)
 		token.push_back(temp);
 		i--;
 	}
+}
+int valComp(Db* db, const Dbt* lhs, const Dbt* rhs, size_t* locp)
+{
+	string l((const char*)(lhs -> get_data()), lhs -> get_size()),
+		r((const char*)(rhs -> get_data()), rhs -> get_size());
+	if (l[0] == '\'')
+		if (l == r)
+			return 0;
+		else if (l < r)
+			return -1;
+		else
+			return +1;
+	else
+	{
+		int ll, rr;
+		sscanf(l.c_str(), "%d", &ll);
+		sscanf(r.c_str(), "%d", &rr);
+		return ll - rr;
+	}
+}
+int valComp2(Db* db, const Dbt* lhs, const Dbt* rhs, size_t* locp)
+{
+	if (lhs -> get_size() != rhs -> get_size())
+		return lhs -> get_size() - rhs -> get_size();
+	const char *l = (const char*)(lhs -> get_data()), *r = (const char*)(rhs -> get_data());
+	for (int i = 0; i < lhs -> get_size(); i++, l++, r++)
+		if (*l != *r)
+			return *l - *r;
+	return 0;
 }
 
 // Data
@@ -160,7 +191,7 @@ void train(const vector<string>& query, const vector<double>& weight)
 	{
 		Db* db = new Db(&env, 0);
 		db -> set_flags(DB_DUPSORT);
-		// db -> set_bt_compare();  // integer compare later
+		db -> set_bt_compare(valComp2);
 		db -> open(NULL, (it -> first).c_str(), NULL, DB_BTREE, DB_CREATE | DB_EXCL, 0);
 		table2db[col2table[it -> first]] -> associate(NULL, db, get_idx_key, 0);
 		col2idx[it -> first] = db;
@@ -202,6 +233,30 @@ vector<map<string, int> > colGroup;
 vector<vector<Condition*> > where, condJoin;
 vector<vector<string> > condJoinCol;
 vector<int> tableSize;
+double estimate(Condition* cond)
+{
+       if (col2idx.count(cond -> lhs) == 0)
+               return table2size[col2table[cond -> lhs]];
+       if (cond -> op == Condition::EQ)
+               return 0;
+       int min = 0, max = 2147483647, val;
+       // assume at least one record, or begin()/rbegin() causes SegFault
+       // TODO: cursor OR another idx OR LE count?
+       Dbc* cur = NULL;
+       col2idx[cond -> lhs] -> cursor(NULL, &cur, DB_CURSOR_BULK);
+       Dbt key, data;
+       cur -> get(&key, &data, DB_FIRST);
+       sscanf((const char*)(key.get_data()), "%d", &min);
+       cur -> get(&key, &data, DB_LAST);
+       sscanf((const char*)(key.get_data()), "%d", &max);
+       sscanf((cond -> rhs).c_str(), "%d", &val);
+       double rate, total = max - min + 1.0;
+       if (cond -> op == Condition::LT)
+               rate = (val - min) / total;
+       else
+               rate = (max - val) / total;
+       return rate * table2size[col2table[cond -> lhs]];
+}
 vector<string> row;
 string indent;
 void select(int tid)
@@ -216,21 +271,44 @@ void select(int tid)
 	}
 	else
 	{
-		int minCond = -1, minCondIdx = -1;
-		for (int j = 0; j < where[tid].size() && (where[tid][j] -> op) == Condition::EQ; j++)
-			if (
-				col2idx.count(where[tid][j] -> lhs) > 0/* &&
-				(minCond == -1 || idx[where[tid][j] -> lhs][where[tid][j] -> rhs].size() < minCond)*/
-				)
-				minCondIdx = j, minCond = 0;
+		int minCondIdx = -1, minCond = -1;
+		for (int j = 0; j < where[tid].size()/* && (where[tid][j] -> op) == Condition::EQ*/; j++)
+			if (col2idx.count(where[tid][j] -> lhs) > 0)
+			{
+				// int count = idx[where[tid][j] -> lhs][where[tid][j] -> rhs].size();
+				// if (minCond == -1 || count < minCond)
+					minCondIdx = j;//, minCond = 0;
+				break;
+			}
 		Dbc* cur = NULL;
 		Dbt *key = NULL, data;
+		u_int32_t flagInit = DB_NEXT, flagStep = DB_NEXT;
 		if (minCondIdx != -1)
 		{
 			Condition* cond = where[tid][minCondIdx];
 			col2idx[cond -> lhs] -> cursor(NULL, &cur, DB_CURSOR_BULK);
 			memcpy(bufKey, (cond -> rhs).c_str(), (cond -> rhs).size());
 			key = new Dbt(bufKey, (cond -> rhs).size());
+			if (cond -> op == Condition::EQ)
+			{
+				flagInit = DB_SET;
+				flagStep = DB_NEXT_DUP;
+			}
+			else if (cond -> op == Condition::LT)
+			{
+				cur -> get(key, &data, DB_SET_RANGE);
+				flagInit = DB_PREV;
+				flagStep = DB_PREV;
+			}
+			else  // if (cond -> op == Condition::GT)
+			{
+				cur -> get(key, &data, DB_SET_RANGE);
+				if (cond -> rhs == string((const char*)(key -> get_data()), key -> get_size()))
+					flagInit = DB_NEXT_NODUP;
+				else
+					flagInit = DB_CURRENT;
+				flagStep = DB_NEXT;
+			}
 			// fprintf(stderr, "Using index for %s!\n", (where[tid][minCondIdx] -> lhs).c_str());
 		}
 		else
@@ -238,11 +316,7 @@ void select(int tid)
 			table2db[tableName[tid]] -> cursor(NULL, &cur, DB_CURSOR_BULK);
 			key = new Dbt();
 		}
-		for (
-			int ret = cur -> get(key, &data, (minCondIdx != -1)?DB_SET:DB_NEXT);
-			ret == 0;
-			ret = cur -> get(key, &data, (minCondIdx != -1)?DB_NEXT_DUP:DB_NEXT)
-			)
+		for (int ret = cur -> get(key, &data, flagInit); ret == 0; ret = cur -> get(key, &data, flagStep))
 		{
 			int lhs, rhs;
 			bool pass = true;
@@ -379,13 +453,16 @@ void execute(const string& sql)
 		}
 	token.clear();
 	table.clear();
-	// BEGIN Condition table by intelligence
+	// BEGIN Sort Condition table by intelligence
 	for (int tid = 0; tid < iTable; tid++)
+	{
+		for (int i = 0; i < where[tid].size(); i++)
+			where[tid][i] -> approx = estimate(where[tid][i]);
 		for (int i = where[tid].size(); i >= 2; i--)
 		{
 			bool ok = true;
 			for (int j = 0; j < i - 1; j++)
-				if ((where[tid][j] -> op) != Condition::EQ && (where[tid][j + 1] -> op) == Condition::EQ)
+				if (where[tid][j] -> approx > where[tid][j + 1] -> approx)
 				{
 					ok = false;
 					Condition* t = where[tid][j];
@@ -395,7 +472,8 @@ void execute(const string& sql)
 			if (ok)
 				break;
 		}
-	// BEGIN Condition table by intelligence
+	}
+	// END Sort Condition table by intelligence
 
 	indent.clear();
 	select(0);
