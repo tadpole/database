@@ -244,14 +244,19 @@ void select(int tid)
 	}
 	else
 	{
-		int minCondIdx = -1, minCond = -1;
+		int minCondIdx = -1;
+		double minCond = -1;
 		for (int j = 0; j < where[tid].size()/* && (where[tid][j] -> op) == Condition::EQ*/; j++)
 			if (idx.count(where[tid][j] -> lhs) > 0)
 			{
-				//int count = idx[where[tid][j] -> lhs].count(where[tid][j] -> rhs);  // EFF: count is linear!
-				//if (minCond == -1 || count < minCond)
-					minCondIdx = j;//, minCond = count;
-					break;
+				double count;
+				if (where[tid][j] -> op == Condition::EQ)
+					count = idx[where[tid][j] -> lhs][where[tid][j] -> rhs].size();
+				else
+					count = where[tid][j] -> approx;
+				if (minCond < 0 || count < minCond)
+					minCondIdx = j, minCond = count;
+				// break;
 			}
 		v2idxs::iterator iBegin, iEnd;
 		if (minCondIdx != -1)
