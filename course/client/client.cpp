@@ -289,18 +289,17 @@ void select(int tid)
 			if (!forFirst)
 			{
 				if (minCondIdx != -1)
-				{
 					iItI++;
-					if (iItI >= (iIt -> second).size())
-					{
-						++iIt;
-						iItI = 0;
-					}
-				}
 				else
 					i++;
 			}
 			forFirst = false;
+			if (minCondIdx != -1)
+				while (iIt != iEnd && iItI >= (iIt -> second).size())
+				{
+					++iIt;
+					iItI = 0;
+				}
 			// for-cond
 			bool forCond = true;
 			if (minCondIdx != -1)
