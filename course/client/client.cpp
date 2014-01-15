@@ -15,12 +15,14 @@ struct Condition
 	string lhs, rhs;
 	enum OP {LT, EQ, GT, NUL};
 	OP op;
-	Condition() {op = NUL;}
+	double approx;
+	Condition() {op = NUL; approx = -1;}
 	Condition(const string& lhs, const string& rhs, OP op)
 	{
 		this -> lhs = lhs;
 		this -> rhs = rhs;
 		this -> op = op;
+		approx = -1;
 	}
 	void show() const
 	{
@@ -66,6 +68,15 @@ struct valComp
 		}
 	}
 };
+struct valComp2
+{
+	bool operator()(const string& lhs, const string& rhs) const
+	{
+		if (lhs.size() != rhs.size())
+			return lhs.size() < rhs.size();
+		return lhs < rhs;
+	}
+};
 
 // Data
 map<string, vector<string> > table2col;
@@ -77,7 +88,7 @@ map<string, int> col2type;  // 0 for int, other for varchar
 // Index / Helper / Aux
 map<string, string> col2table;
 map<string, double> col2w;
-typedef multimap<string, int, valComp> v2idxs;
+typedef map<string, vector<int>, valComp2> v2idxs;
 map<string, v2idxs> idx;
 
 // Output
@@ -141,12 +152,12 @@ void load(const string& table, const vector<string>& row)
 		{
 			col2data[col[j]].push_back(token[j]);
 			if (col2w.count(col[j]) > 0)
-				idx[col[j]].insert(pair<string, int>(token[j], col2data[col[j]].size() - 1));
+				idx[col[j]][token[j]].push_back(col2data[col[j]].size() - 1);
 		}
 		token.clear();
 	}
 }
-typedef multimap<string, string, valComp> v2kMap;
+// typedef multimap<string, string, valComp2> v2kMap;
 void preprocess()
 {
 	// Build index in load, so that INSERT can use it directly.
@@ -212,7 +223,7 @@ double estimate(Condition* cond)
 	sscanf((idx[cond -> lhs].begin() -> first).c_str(), "%d", &min);
 	sscanf((idx[cond -> lhs].rbegin() -> first).c_str(), "%d", &max);
 	sscanf((cond -> rhs).c_str(), "%d", &cur);
-	double rate, total = max - min + 1;
+	double rate, total = max - min + 1.0;
 	if (cond -> op == Condition::LT)
 		rate = (cur - min) / total;
 	else
@@ -265,14 +276,36 @@ void select(int tid)
 			// fprintf(stderr, "%sUsing index for %s!\n", indent.c_str(), (where[tid][minCondIdx] -> lhs).c_str());
 		}
 		v2idxs::iterator iIt = iBegin;
-		for (
-			int i = 0;
-			(minCondIdx != -1)?(iIt != iEnd):(i < tableSize[tid]);
-			((minCondIdx != -1)?(++iIt):(iIt)), i++  // Cannot update i with *iIt here, size() not checked yet.
-			)
+		int i = 0, iItI = 0;
+		bool forFirst = true;
+		while (1)
 		{
+			// for-step
+			if (!forFirst)
+			{
+				if (minCondIdx != -1)
+				{
+					iItI++;
+					if (iItI >= (iIt -> second).size())
+					{
+						++iIt;
+						iItI = 0;
+					}
+				}
+				else
+					i++;
+			}
+			forFirst = false;
+			// for-cond
+			bool forCond = true;
 			if (minCondIdx != -1)
-				i = iIt -> second;
+				forCond = iIt != iEnd;
+			else
+				forCond = i < tableSize[tid];
+			if (!forCond)
+				break;
+			if (minCondIdx != -1)
+				i = (iIt -> second)[iItI];
 			// fprintf(stderr, "%sLooping i = %d\n", indent.c_str(), i);
 			int lhs, rhs;
 			bool pass = true;
@@ -409,13 +442,16 @@ void execute(const string& sql)
 		}
 	token.clear();
 	table.clear();
-	// BEGIN Condition table by intelligence
+	// BEGIN Sort Condition table by intelligence
 	for (int tid = 0; tid < iTable; tid++)
+	{
+		for (int i = 0; i < where[tid].size(); i++)
+			where[tid][i] -> approx = estimate(where[tid][i]);
 		for (int i = where[tid].size(); i >= 2; i--)
 		{
 			bool ok = true;
 			for (int j = 0; j < i - 1; j++)
-				if (estimate(where[tid][j]) > estimate(where[tid][j + 1]))
+				if (where[tid][j] -> approx > where[tid][j + 1] -> approx)
 				{
 					ok = false;
 					Condition* t = where[tid][j];
@@ -425,7 +461,8 @@ void execute(const string& sql)
 			if (ok)
 				break;
 		}
-	// END Condition table by intelligence
+	}
+	// END Sort Condition table by intelligence
 
 	indent.clear();
 	select(0);
